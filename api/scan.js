@@ -1,3 +1,39 @@
+// ── Calibration table ──────────────────────────────────────────────
+// Format: [claude_raw, actual_brix]
+// Measured empirically on this device/adaptor combination.
+// Add more points as you collect them — more points = more accurate.
+// IMPORTANT: for the 50-unit pilot, each device needs its own calibration.
+const CALIBRATION = [
+  [0.0,  0.0],   // anchor: zero point
+  [6.3,  5.8],
+  [11.3, 10.4],
+  [12.3, 10.6],
+  [15.0, 14.0],
+  [17.3, 17.2],
+  [32.0, 32.0],  // anchor: top of scale
+];
+
+function applyCalibration(raw) {
+  if (raw === null || raw === undefined) return null;
+  // Sort by raw value (should already be sorted, but just in case)
+  const pts = CALIBRATION.slice().sort((a, b) => a[0] - b[0]);
+  // Clamp to table range
+  if (raw <= pts[0][0]) return pts[0][1];
+  if (raw >= pts[pts.length - 1][0]) return pts[pts.length - 1][1];
+  // Find surrounding points and interpolate
+  for (let i = 0; i < pts.length - 1; i++) {
+    const [x0, y0] = pts[i];
+    const [x1, y1] = pts[i + 1];
+    if (raw >= x0 && raw <= x1) {
+      const t = (raw - x0) / (x1 - x0);
+      const corrected = y0 + t * (y1 - y0);
+      return Math.round(corrected * 10) / 10;
+    }
+  }
+  return Math.round(raw * 10) / 10;
+}
+// ──────────────────────────────────────────────────────────────────
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
@@ -14,22 +50,15 @@ export default async function handler(req, res) {
       body: JSON.stringify({
         model: 'claude-sonnet-4-5',
         max_tokens: 400,
-        system: `You are a refractometer image analyzer. Your ONLY job is to identify the vertical positions of three visual features in the image.
+        system: `You are a refractometer image analyzer. Identify the VERTICAL POSITIONS of three specific features in the image, measured as percentage of total image height from top (0% = image top, 100% = image bottom).
 
-Measure positions as a percentage of total image height from the top edge:
-- 0% = very top of image
-- 50% = middle of image  
-- 100% = very bottom of image
+FEATURES TO LOCATE:
+1. BOUNDARY: The sharp horizontal line between the BLUE/DARK upper region and WHITE/CLEAR lower region
+2. LOWER_MARK: The highest labeled major scale mark (0,5,10,15,20,25,30) that appears BELOW the boundary
+3. UPPER_MARK: The lowest labeled major scale mark that appears ABOVE the boundary
 
-LOCATE THESE THREE FEATURES:
-
-1. BOUNDARY — the sharp horizontal line separating the BLUE/DARK region (above) from the WHITE/CLEAR region (below). Report where this line crosses the center of the scale column.
-
-2. LOWER_MARK — the highest printed number on the scale (must be a multiple of 5: 0,5,10,15,20,25,30) that sits BELOW the boundary line. Report both its numeric value and its y-position.
-
-3. UPPER_MARK — the lowest printed number on the scale (multiple of 5) that sits ABOVE the boundary line. Report both its numeric value and its y-position.
-
-DO NOT calculate the Brix value. Do not estimate fractions. Only report the three y-positions accurately.
+Report the numeric value of each major mark and its y-position as a percentage.
+DO NOT calculate the Brix value yourself. Only report positions.
 
 Respond ONLY with compact JSON, no preamble, no markdown:
 {"boundary_y":<number 0-100>,"lower_brix":<number>,"lower_y":<number 0-100>,"upper_brix":<number>,"upper_y":<number 0-100>,"confidence":"high"|"medium"|"low","notes":"<brief image quality note>"}`,
@@ -48,30 +77,28 @@ Respond ONLY with compact JSON, no preamble, no markdown:
     const rawText = claudeData.content.map(b => b.text || '').join('').trim();
     const pos = JSON.parse(rawText.replace(/```json|```/g, '').trim());
 
-    // ── Server-side Brix calculation from y-positions ──────────────
-    // In the image: higher Brix = higher up = smaller y%
-    // So: lower_y > boundary_y > upper_y
-    let brix = null;
+    // ── Geometric Brix calculation from y-positions ────────────────
+    let rawBrix = null;
     let fraction = null;
-
     if (
       pos.lower_y !== undefined && pos.upper_y !== undefined &&
       pos.boundary_y !== undefined && pos.lower_y !== pos.upper_y
     ) {
       fraction = (pos.lower_y - pos.boundary_y) / (pos.lower_y - pos.upper_y);
-      fraction = Math.max(0, Math.min(1, fraction)); // clamp 0–1
-      brix = pos.lower_brix + fraction * (pos.upper_brix - pos.lower_brix);
-      brix = Math.round(brix * 10) / 10; // round to 1 decimal place
+      fraction = Math.max(0, Math.min(1, fraction));
+      rawBrix = pos.lower_brix + fraction * (pos.upper_brix - pos.lower_brix);
+      rawBrix = Math.round(rawBrix * 10) / 10;
     }
 
+    // ── Apply calibration correction ───────────────────────────────
+    const calibratedBrix = applyCalibration(rawBrix);
+
     const reading = {
-      brix,
+      brix: calibratedBrix,
+      brix_raw: rawBrix,
       confidence: pos.confidence,
-      boundary_position: `boundary at ${pos.boundary_y}% · ${pos.lower_brix} mark at ${pos.lower_y}% · ${pos.upper_brix} mark at ${pos.upper_y}% · fraction ${fraction !== null ? fraction.toFixed(3) : 'n/a'}`,
-      notes: pos.notes,
-      lower_brix: pos.lower_brix,
-      upper_brix: pos.upper_brix,
-      fraction: fraction
+      boundary_position: `raw ${rawBrix} → calibrated ${calibratedBrix} | boundary ${pos.boundary_y}% · ${pos.lower_brix} mark @ ${pos.lower_y}% · ${pos.upper_brix} mark @ ${pos.upper_y}% · fraction ${fraction !== null ? fraction.toFixed(3) : 'n/a'}`,
+      notes: pos.notes
     };
 
     // Upload image to Supabase Storage
@@ -100,7 +127,7 @@ Respond ONLY with compact JSON, no preamble, no markdown:
       body: JSON.stringify({
         fruit_type: fruit_type || 'unspecified',
         batch_id: batch_id || null,
-        brix: reading.brix,
+        brix: calibratedBrix,
         confidence: reading.confidence,
         boundary_position: reading.boundary_position,
         notes: reading.notes,
