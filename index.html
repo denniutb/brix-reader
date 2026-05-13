@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>MyBrixS</title>
+  <style>
+    :root {
+      --green-dark: #1B4332;
+      --green-mid: #2D6A4F;
+      --green-light: #52B788;
+      --green-pale: #D8F3DC;
+      --amber: #F4A261;
+      --gray-light: #F8F9FA;
+      --gray-mid: #DEE2E6;
+      --text-primary: #212529;
+      --text-secondary: #6C757D;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--gray-light); color: var(--text-primary); min-height: 100vh; }
+    .header { background: var(--green-dark); color: white; padding: 16px 20px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; }
+    .logo { font-size: 22px; font-weight: 700; }
+    .logo span { color: var(--green-light); }
+    .gps-badge { display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 4px 10px; border-radius: 20px; background: rgba(255,255,255,0.1); }
+    .gps-dot { width: 8px; height: 8px; border-radius: 50%; background: #aaa; }
+    .gps-dot.ok { background: var(--green-light); }
+    .gps-dot.searching { background: var(--amber); animation: pulse 1s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .view { display: none; padding: 20px; max-width: 480px; margin: 0 auto; }
+    .view.active { display: block; }
+    .setup-header { text-align: center; padding: 30px 0 24px; }
+    .setup-title { font-size: 26px; font-weight: 700; color: var(--green-dark); }
+    .setup-subtitle { font-size: 14px; color: var(--text-secondary); margin-top: 6px; }
+    .card { background: white; border-radius: 16px; padding: 20px; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+    .card-title { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-secondary); margin-bottom: 12px; }
+    label { display: block; font-size: 14px; font-weight: 500; margin-bottom: 6px; }
+    select, input[type="text"], input[type="number"] { width: 100%; padding: 12px 14px; border: 1.5px solid var(--gray-mid); border-radius: 10px; font-size: 15px; background: white; color: var(--text-primary); margin-bottom: 16px; -webkit-appearance: none; }
+    select:focus, input:focus { outline: none; border-color: var(--green-mid); }
+    .batch-id-row { display: flex; gap: 8px; margin-bottom: 16px; }
+    .batch-id-row input { flex: 1; margin-bottom: 0; }
+    .btn-gen { padding: 12px 14px; background: var(--green-pale); color: var(--green-dark); border: none; border-radius: 10px; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+    .btn-primary { width: 100%; padding: 16px; background: var(--green-dark); color: white; border: none; border-radius: 12px; font-size: 16px; font-weight: 600; cursor: pointer; margin-top: 8px; }
+    .batch-bar { background: white; border-radius: 12px; padding: 14px 16px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+    .batch-name { font-size: 16px; font-weight: 700; color: var(--green-dark); }
+    .batch-sub { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+    .btn-new-batch { padding: 8px 14px; background: var(--gray-light); color: var(--text-secondary); border: 1px solid var(--gray-mid); border-radius: 8px; font-size: 13px; cursor: pointer; }
+    .scan-zone { text-align: center; padding: 8px 0 16px; }
+    .btn-scan { width: 100%; padding: 20px; background: var(--green-dark); color: white; border: none; border-radius: 16px; font-size: 18px; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 10px; box-shadow: 0 4px 16px rgba(27,67,50,0.3); }
+    .btn-scan:disabled { opacity: 0.6; cursor: not-allowed; }
+    #camera-input { display: none; }
+    .result-card { background: white; border-radius: 16px; padding: 20px; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); display: none; }
+    .result-card.show { display: block; }
+    .result-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
+    .brix-big { font-size: 56px; font-weight: 700; color: var(--green-dark); line-height: 1; }
+    .brix-unit { font-size: 20px; color: var(--text-secondary); }
+    .conf-badge { display: inline-block; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+    .conf-high { background: #D8F3DC; color: #1B4332; }
+    .conf-medium { background: #FFF3CD; color: #856404; }
+    .conf-low { background: #FFDDE1; color: #842029; }
+    .result-img { width: 100%; max-height: 180px; object-fit: contain; border-radius: 10px; background: var(--gray-light); margin-top: 12px; }
+    .result-details { font-size: 13px; color: var(--text-secondary); margin-top: 10px; line-height: 1.6; }
+    .summary-card { background: white; border-radius: 16px; padding: 20px; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+    .summary-stats { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+    .stat-box { text-align: center; padding: 12px 8px; background: var(--gray-light); border-radius: 10px; }
+    .stat-value { font-size: 22px; font-weight: 700; color: var(--green-dark); }
+    .stat-label { font-size: 11px; color: var(--text-secondary); margin-top: 2px; text-transform: uppercase; letter-spacing: 0.04em; }
+    .harvest-banner { padding: 14px 16px; border-radius: 12px; font-size: 14px; font-weight: 600; text-align: center; margin-bottom: 16px; display: flex; align-items: center; justify-content: center; gap: 8px; }
+    .harvest-ready { background: var(--green-pale); color: var(--green-dark); border: 2px solid var(--green-light); }
+    .harvest-not-ready { background: #FFF3CD; color: #664D03; border: 2px solid #FFD700; }
+    .harvest-pending { background: var(--gray-light); color: var(--text-secondary); border: 2px solid var(--gray-mid); }
+    .readings-list { margin-top: 8px; }
+    .reading-item { display: flex; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--gray-mid); gap: 12px; }
+    .reading-item:last-child { border-bottom: none; }
+    .reading-num { width: 28px; height: 28px; border-radius: 50%; background: var(--green-pale); color: var(--green-dark); font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+    .reading-brix { font-size: 18px; font-weight: 700; width: 60px; }
+    .reading-meta { flex: 1; font-size: 12px; color: var(--text-secondary); line-height: 1.4; }
+    .reading-thumb { width: 40px; height: 40px; border-radius: 6px; object-fit: cover; background: var(--gray-light); }
+    .loading-overlay { position: fixed; inset: 0; background: rgba(27,67,50,0.88); display: none; flex-direction: column; align-items: center; justify-content: center; z-index: 999; }
+    .loading-overlay.show { display: flex; }
+    .loading-spinner { width: 48px; height: 48px; border: 4px solid rgba(255,255,255,0.3); border-top-color: white; border-radius: 50%; animation: spin 0.8s linear infinite; margin-bottom: 16px; }
+    .loading-text { color: white; font-size: 16px; font-weight: 600; }
+    .loading-sub { color: rgba(255,255,255,0.7); font-size: 13px; margin-top: 6px; }
+    .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #212529; color: white; padding: 12px 20px; border-radius: 10px; font-size: 14px; z-index: 1000; opacity: 0; transition: opacity 0.3s; white-space: nowrap; }
+    .toast.show { opacity: 1; }
+    .note-row { display: flex; gap: 8px; margin-top: 10px; }
+    .note-row input { flex: 1; margin-bottom: 0; font-size: 14px; }
+  </style>
+</head>
+<body>
+
+<div class="loading-overlay" id="loading">
+  <div class="loading-spinner"></div>
+  <div class="loading-text">Reading Brix value…</div>
+  <div class="loading-sub">Saving record to cloud</div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<div class="header">
+  <div class="logo">My<span>Brix</span>S</div>
+  <div class="gps-badge">
+    <div class="gps-dot" id="gps-dot"></div>
+    <span id="gps-label">GPS…</span>
+  </div>
+</div>
+
+<!-- SETUP VIEW -->
+<div class="view active" id="view-setup">
+  <div class="setup-header">
+    <div class="setup-title">New Batch</div>
+    <div class="setup-subtitle">Configure before scanning</div>
+  </div>
+  <div class="card">
+    <div class="card-title">Crop details</div>
+    <label>Fruit type</label>
+    <select id="fruit-type">
+      <option value="pineapple">🍍 Pineapple</option>
+      <option value="dabai">🫐 Dabai</option>
+      <option value="durian">🟡 Durian</option>
+      <option value="mandarin">🍊 Mandarin Orange</option>
+      <option value="other">🌿 Other</option>
+    </select>
+    <label>Harvest Ready threshold (Brix)</label>
+    <input type="number" id="threshold" value="12" step="0.5" min="0" max="32">
+    <label>Batch ID</label>
+    <div class="batch-id-row">
+      <input type="text" id="batch-id" placeholder="e.g. ROW-A-13MAY">
+      <button class="btn-gen" onclick="generateBatchId()">Auto</button>
+    </div>
+    <label>Farm / Location note (optional)</label>
+    <input type="text" id="farm-note" placeholder="e.g. Block 3, Row A">
+  </div>
+  <button class="btn-primary" onclick="startBatch()">▶ Start Scanning</button>
+</div>
+
+<!-- SCANNER VIEW -->
+<div class="view" id="view-scanner">
+  <div class="batch-bar">
+    <div>
+      <div class="batch-name" id="bar-batch-name">—</div>
+      <div class="batch-sub" id="bar-batch-sub">—</div>
+    </div>
+    <button class="btn-new-batch" onclick="newBatch()">New Batch</button>
+  </div>
+
+  <div class="harvest-banner harvest-pending" id="harvest-banner">
+    📊 Scan your first sample to begin
+  </div>
+
+  <div class="scan-zone">
+    <input type="file" id="camera-input" accept="image/*" capture="environment" onchange="handleCapture(this)">
+    <button class="btn-scan" id="scan-btn" onclick="document.getElementById('camera-input').click()">
+      <span>📷</span><span>Scan Refractometer</span>
+    </button>
+  </div>
+
+  <div class="result-card" id="result-card">
+    <div class="card-title">Latest reading</div>
+    <div class="result-top">
+      <div>
+        <span class="brix-big" id="res-brix">—</span>
+        <span class="brix-unit">% Brix</span>
+      </div>
+      <div style="text-align:right">
+        <div class="conf-badge" id="res-conf">—</div>
+        <div style="font-size:12px;color:#6C757D" id="res-time">—</div>
+        <div style="font-size:12px;color:#6C757D;margin-top:2px" id="res-gps">—</div>
+      </div>
+    </div>
+    <img class="result-img" id="res-img" src="" alt="Scan">
+    <div class="result-details" id="res-details"></div>
+    <div class="note-row">
+      <input type="text" id="note-input" placeholder="Add note for this reading (optional)…">
+    </div>
+  </div>
+
+  <div class="summary-card" id="summary-card" style="display:none">
+    <div class="card-title">Batch summary</div>
+    <div class="summary-stats">
+      <div class="stat-box"><div class="stat-value" id="stat-count">0</div><div class="stat-label">Scans</div></div>
+      <div class="stat-box"><div class="stat-value" id="stat-avg">—</div><div class="stat-label">Avg Brix</div></div>
+      <div class="stat-box"><div class="stat-value" id="stat-min">—</div><div class="stat-label">Min Brix</div></div>
+    </div>
+    <div class="card-title">Readings log</div>
+    <div class="readings-list" id="readings-list"></div>
+  </div>
+</div>
+
+<script>
+let gpsCoords = null;
+let batchReadings = [];
+let currentBatch = null;
+let harvestThreshold = 12;
+
+function initGPS() {
+  const dot = document.getElementById('gps-dot');
+  const label = document.getElementById('gps-label');
+  dot.className = 'gps-dot searching';
+  label.textContent = 'Locating…';
+  if (!navigator.geolocation) { label.textContent = 'No GPS'; return; }
+  navigator.geolocation.watchPosition(
+    pos => {
+      gpsCoords = { lat: pos.coords.latitude, lng: pos.coords.longitude, acc: Math.round(pos.coords.accuracy) };
+      dot.className = 'gps-dot ok';
+      label.textContent = '±' + gpsCoords.acc + 'm';
+    },
+    () => { dot.className = 'gps-dot'; label.textContent = 'GPS off'; },
+    { enableHighAccuracy: true, maximumAge: 10000 }
+  );
+}
+
+function generateBatchId() {
+  const now = new Date();
+  const d = now.getDate().toString().padStart(2,'0');
+  const m = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][now.getMonth()];
+  const rnd = Math.random().toString(36).substring(2,5).toUpperCase();
+  document.getElementById('batch-id').value = 'BATCH-' + d + m + '-' + rnd;
+}
+
+function startBatch() {
+  const batchId = document.getElementById('batch-id').value.trim();
+  if (!batchId) { showToast('Please enter or generate a Batch ID'); return; }
+  harvestThreshold = parseFloat(document.getElementById('threshold').value) || 12;
+  currentBatch = {
+    fruitType: document.getElementById('fruit-type').value,
+    batchId: batchId,
+    farmNote: document.getElementById('farm-note').value.trim(),
+    threshold: harvestThreshold
+  };
+  batchReadings = [];
+  const labels = { pineapple:'🍍 Pineapple', dabai:'🫐 Dabai', durian:'🟡 Durian', mandarin:'🍊 Mandarin', other:'🌿 Other' };
+  document.getElementById('bar-batch-name').textContent = labels[currentBatch.fruitType] || currentBatch.fruitType;
+  document.getElementById('bar-batch-sub').textContent = batchId + (currentBatch.farmNote ? ' · ' + currentBatch.farmNote : '');
+  showView('scanner');
+  updateBanner();
+}
+
+function newBatch() {
+  if (batchReadings.length > 0 && !confirm('Start a new batch? Current batch is saved to cloud.')) return;
+  batchReadings = [];
+  currentBatch = null;
+  document.getElementById('result-card').classList.remove('show');
+  document.getElementById('summary-card').style.display = 'none';
+  showView('setup');
+  updateBanner();
+}
+
+function handleCapture(input) {
+  const file = input.files[0];
+  if (!file) return;
+  input.value = '';
+  const reader = new FileReader();
+  reader.onload = e => compress(e.target.result, (b64, preview) => performScan(b64, preview));
+  reader.readAsDataURL(file);
+}
+
+function compress(dataUrl, cb) {
+  const img = new Image();
+  img.onload = () => {
+    const MAX = 900;
+    let w = img.width, h = img.height;
+    if (w > MAX || h > MAX) {
+      if (w > h) { h = Math.round(h * MAX / w); w = MAX; }
+      else { w = Math.round(w * MAX / h); h = MAX; }
+    }
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    c.getContext('2d').drawImage(img, 0, 0, w, h);
+    const out = c.toDataURL('image/jpeg', 0.85);
+    cb(out.split(',')[1], out);
+  };
+  img.src = dataUrl;
+}
+
+async function performScan(base64, preview) {
+  showLoading(true);
+  try {
+    const res = await fetch('/api/scan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        image: base64,
+        fruit_type: currentBatch?.fruitType || 'unspecified',
+        batch_id: currentBatch?.batchId || null,
+        latitude: gpsCoords?.lat || null,
+        longitude: gpsCoords?.lng || null,
+        farmer_note: document.getElementById('note-input').value || null
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Scan failed');
+    const reading = { ...data, previewUrl: preview, time: new Date(), lat: gpsCoords?.lat, lng: gpsCoords?.lng };
+    batchReadings.push(reading);
+    showResult(reading);
+    updateSummary();
+    updateBanner();
+    document.getElementById('note-input').value = '';
+    showToast('✓ Saved to cloud');
+  } catch(err) {
+    showToast('Error: ' + err.message);
+  } finally {
+    showLoading(false);
+  }
+}
+
+function showResult(r) {
+  document.getElementById('res-brix').textContent = r.brix !== null ? r.brix.toFixed(1) : '?';
+  const cb = document.getElementById('res-conf');
+  cb.textContent = r.confidence === 'high' ? '● High confidence' : r.confidence === 'medium' ? '● Medium' : '● Low confidence';
+  cb.className = 'conf-badge conf-' + (r.confidence || 'low');
+  document.getElementById('res-time').textContent = r.time.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+  document.getElementById('res-gps').textContent = r.lat ? '📍 ' + r.lat.toFixed(5) + ', ' + r.lng.toFixed(5) : '📍 No GPS';
+  document.getElementById('res-img').src = r.previewUrl;
+  document.getElementById('res-details').textContent = (r.boundary_position || '') + (r.notes ? ' · ' + r.notes : '');
+  document.getElementById('result-card').classList.add('show');
+}
+
+function updateSummary() {
+  const valid = batchReadings.filter(r => r.brix !== null);
+  if (!valid.length) return;
+  document.getElementById('summary-card').style.display = 'block';
+  const avg = valid.reduce((s,r) => s + r.brix, 0) / valid.length;
+  document.getElementById('stat-count').textContent = batchReadings.length;
+  document.getElementById('stat-avg').textContent = avg.toFixed(1);
+  document.getElementById('stat-min').textContent = Math.min(...valid.map(r => r.brix)).toFixed(1);
+  const list = document.getElementById('readings-list');
+  list.innerHTML = '';
+  [...batchReadings].reverse().forEach((r, i) => {
+    const n = batchReadings.length - i;
+    const div = document.createElement('div');
+    div.className = 'reading-item';
+    div.innerHTML = '<div class="reading-num">' + n + '</div>' +
+      '<div class="reading-brix">' + (r.brix !== null ? r.brix.toFixed(1) : '?') + '<span style="font-size:11px;color:#6C757D">%</span></div>' +
+      '<div class="reading-meta">' + r.time.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}) + '<br>' + (r.lat ? '📍 ' + r.lat.toFixed(4) + ', ' + r.lng.toFixed(4) : 'No GPS') + '</div>' +
+      (r.previewUrl ? '<img class="reading-thumb" src="' + r.previewUrl + '">' : '');
+    list.appendChild(div);
+  });
+}
+
+function updateBanner() {
+  const banner = document.getElementById('harvest-banner');
+  const valid = batchReadings.filter(r => r.brix !== null);
+  if (!valid.length) {
+    banner.className = 'harvest-banner harvest-pending';
+    banner.textContent = '📊 Scan your first sample to begin';
+    return;
+  }
+  const avg = valid.reduce((s,r) => s + r.brix, 0) / valid.length;
+  const allPass = valid.every(r => r.brix >= harvestThreshold);
+  if (valid.length < 3) {
+    banner.className = 'harvest-banner harvest-pending';
+    banner.textContent = '📊 ' + valid.length + '/3 samples · Avg ' + avg.toFixed(1) + ' Brix · Keep scanning';
+    return;
+  }
+  if (allPass && avg >= harvestThreshold) {
+    banner.className = 'harvest-banner harvest-ready';
+    banner.textContent = '✅ HARVEST READY · Avg ' + avg.toFixed(1) + ' Brix · All ' + valid.length + ' samples ≥ ' + harvestThreshold;
+  } else {
+    banner.className = 'harvest-banner harvest-not-ready';
+    banner.textContent = '⚠️ NOT READY · Avg ' + avg.toFixed(1) + ' Brix · Threshold: ' + harvestThreshold;
+  }
+}
+
+function showView(name) {
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.getElementById('view-' + name).classList.add('active');
+}
+
+function showLoading(on) {
+  document.getElementById('loading').classList.toggle('show', on);
+  document.getElementById('scan-btn').disabled = on;
+}
+
+let toastTimer;
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 3000);
+}
+
+initGPS();
+generateBatchId();
+</script>
+</body>
+</html>
