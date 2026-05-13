@@ -14,44 +14,30 @@ export default async function handler(req, res) {
       body: JSON.stringify({
         model: 'claude-sonnet-4-5',
         max_tokens: 400,
-        system: `You are a precision refractometer reader for agricultural quality control. Accuracy matters — a wrong reading causes harvest rejection.
+        system: `You are a refractometer image analyzer. Your ONLY job is to identify the vertical positions of three visual features in the image.
 
-SCALE FACTS:
-- Range: 0 to 32% Brix
-- Major labeled marks every 5 units: 0, 5, 10, 15, 20, 25, 30
-- Between each pair of major marks: 10 minor tick intervals = 0.5 Brix each
+Measure positions as a percentage of total image height from the top edge:
+- 0% = very top of image
+- 50% = middle of image  
+- 100% = very bottom of image
 
-READING METHOD — use BOTH approaches and cross-check:
+LOCATE THESE THREE FEATURES:
 
-PRIMARY (fraction method):
-1. Find the BOUNDARY LINE — sharp horizontal edge between BLUE/DARK upper region and WHITE/CLEAR lower region
-2. Find L = the highest labeled major mark BELOW or AT the boundary
-3. Find U = the lowest labeled major mark ABOVE the boundary
-4. Estimate fraction F = how far the boundary is from L toward U (0.0 = at L, 1.0 = at U)
-5. brix = L + (F × 5.0)
+1. BOUNDARY — the sharp horizontal line separating the BLUE/DARK region (above) from the WHITE/CLEAR region (below). Report where this line crosses the center of the scale column.
 
-SECONDARY (tick count check):
-6. Count minor ticks from L up to the boundary (each tick = 0.5 Brix)
-7. brix_check = L + (tick_count × 0.5)
-8. If primary and secondary agree within 0.5 → use primary result. If they disagree → re-examine and pick the more plausible value.
+2. LOWER_MARK — the highest printed number on the scale (must be a multiple of 5: 0,5,10,15,20,25,30) that sits BELOW the boundary line. Report both its numeric value and its y-position.
 
-CRITICAL RULES:
-- NEVER estimate brix as a fraction of total image height — always anchor to visible labeled marks
-- The boundary line is horizontal — read where it crosses the central tick mark column
-- Perspective or lens distortion may compress the top of the scale — always use L and U as anchors
+3. UPPER_MARK — the lowest printed number on the scale (multiple of 5) that sits ABOVE the boundary line. Report both its numeric value and its y-position.
 
-EXAMPLES:
-- L=15, U=20, boundary looks ~44% up from 15 → brix = 15 + (0.44×5) = 17.2
-- L=25, U=30, boundary looks ~84% up from 25 → brix = 25 + (0.84×5) = 29.2
-- L=15, U=20, count 4 ticks above 15 → brix = 15 + (4×0.5) = 17.0
+DO NOT calculate the Brix value. Do not estimate fractions. Only report the three y-positions accurately.
 
-Respond ONLY with compact JSON, no preamble, no markdown fences:
-{"brix":<number>,"confidence":"high"|"medium"|"low","L":<lower_major_mark>,"U":<upper_major_mark>,"fraction":<0.00-1.00>,"tick_count":<integer or null>,"boundary_position":"<e.g. boundary sits 44% of the way from 15 to 20>","notes":"<image quality note>"}`,
+Respond ONLY with compact JSON, no preamble, no markdown:
+{"boundary_y":<number 0-100>,"lower_brix":<number>,"lower_y":<number 0-100>,"upper_brix":<number>,"upper_y":<number 0-100>,"confidence":"high"|"medium"|"low","notes":"<brief image quality note>"}`,
         messages: [{
           role: 'user',
           content: [
             { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: image } },
-            { type: 'text', text: 'Read the Brix value from this refractometer image using the fraction method anchored to major scale marks.' }
+            { type: 'text', text: 'Identify the vertical positions of the boundary line and the two nearest major scale marks.' }
           ]
         }]
       })
@@ -60,7 +46,33 @@ Respond ONLY with compact JSON, no preamble, no markdown fences:
     const claudeData = await claudeRes.json();
     if (!claudeRes.ok) throw new Error(claudeData.error?.message || 'Claude API error');
     const rawText = claudeData.content.map(b => b.text || '').join('').trim();
-    const reading = JSON.parse(rawText.replace(/```json|```/g, '').trim());
+    const pos = JSON.parse(rawText.replace(/```json|```/g, '').trim());
+
+    // ── Server-side Brix calculation from y-positions ──────────────
+    // In the image: higher Brix = higher up = smaller y%
+    // So: lower_y > boundary_y > upper_y
+    let brix = null;
+    let fraction = null;
+
+    if (
+      pos.lower_y !== undefined && pos.upper_y !== undefined &&
+      pos.boundary_y !== undefined && pos.lower_y !== pos.upper_y
+    ) {
+      fraction = (pos.lower_y - pos.boundary_y) / (pos.lower_y - pos.upper_y);
+      fraction = Math.max(0, Math.min(1, fraction)); // clamp 0–1
+      brix = pos.lower_brix + fraction * (pos.upper_brix - pos.lower_brix);
+      brix = Math.round(brix * 10) / 10; // round to 1 decimal place
+    }
+
+    const reading = {
+      brix,
+      confidence: pos.confidence,
+      boundary_position: `boundary at ${pos.boundary_y}% · ${pos.lower_brix} mark at ${pos.lower_y}% · ${pos.upper_brix} mark at ${pos.upper_y}% · fraction ${fraction !== null ? fraction.toFixed(3) : 'n/a'}`,
+      notes: pos.notes,
+      lower_brix: pos.lower_brix,
+      upper_brix: pos.upper_brix,
+      fraction: fraction
+    };
 
     // Upload image to Supabase Storage
     const imageBuffer = Buffer.from(image, 'base64');
@@ -77,7 +89,6 @@ Respond ONLY with compact JSON, no preamble, no markdown fences:
 
     const imageUrl = `${process.env.SUPABASE_URL}/storage/v1/object/public/mybrixs-images/${filename}`;
 
-    // Save record to Supabase — includes L, U, fraction, tick_count for audit trail
     await fetch(`${process.env.SUPABASE_URL}/rest/v1/readings`, {
       method: 'POST',
       headers: {
