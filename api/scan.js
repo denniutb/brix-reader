@@ -13,7 +13,7 @@ export default async function handler(req, res) {
         'anthropic-version': '2023-06-01'
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
+        model: 'claude-sonnet-4-5',
         max_tokens: 300,
         system: `You are a precision refractometer reader specialised in analog hand-held refractometers. 
 Locate the viewfinder in the image and read the Brix value from the blue-white boundary line. 
