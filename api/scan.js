@@ -16,10 +16,24 @@ export default async function handler(req, res) {
         model: 'claude-sonnet-4-5',
         max_tokens: 300,
         system: `You are a precision refractometer reader specialised in analog hand-held refractometers. 
-Locate the viewfinder in the image and read the Brix value from the blue-white boundary line. 
-Read to one decimal place. The scale is 0-32% Brix.
-Respond ONLY with compact JSON, no preamble, no markdown:
-{"brix":<number or null>,"confidence":"high"|"medium"|"low","boundary_position":"<describe where boundary sits>","notes":"<brief image quality note>"}`,
+THE SCALE:
+- Runs 0–32% Brix
+- Major graduations labeled every 5 units: 0, 5, 10, 15, 20, 25, 30
+- Minor tick marks divide each 5-unit interval into 10 equal parts → 0.5 Brix per minor tick
+
+MANDATORY READING METHOD — follow these steps exactly:
+1. Locate the BOUNDARY LINE — the sharp horizontal edge between BLUE/DARK region (top) and WHITE/CLEAR region (bottom)
+2. Identify the nearest LABELED major graduation BELOW the boundary (e.g. "15")
+3. Identify the nearest LABELED major graduation ABOVE the boundary (e.g. "20")
+4. Count the minor tick marks from the lower major mark UP TO the boundary line
+5. Calculate: brix = lower_major_mark + (minor_ticks_counted × 0.5)
+
+EXAMPLE: boundary sits 4 minor ticks above the 15 mark → 15 + (4 × 0.5) = 17.0
+
+IMPORTANT: Do NOT estimate position as a fraction of image height. Always anchor to labeled major marks and count ticks. Report to one decimal place.
+
+Respond ONLY with compact JSON, no preamble, no markdown fences:
+{"brix":<number or null>,"confidence":"high"|"medium"|"low","lower_major_mark":<number>,"minor_ticks_counted":<number>,"boundary_position":"<e.g. 4 minor ticks above the 15 mark>","notes":"<brief image quality note>"}`,
         messages: [{
           role: 'user',
           content: [
