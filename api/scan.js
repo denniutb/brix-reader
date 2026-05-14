@@ -1,37 +1,88 @@
-// ── Calibration table ──────────────────────────────────────────────
-// Format: [claude_raw, actual_brix]
-// Measured empirically on this device/adaptor combination.
-// Add more points as you collect them — more points = more accurate.
-// IMPORTANT: for the 50-unit pilot, each device needs its own calibration.
-const CALIBRATION = [
-  [0.0,  0.0],   // anchor: zero point
-  [6.3,  5.8],
-  [11.3, 10.4],
-  [12.3, 10.6],
-  [15.0, 14.0],
-  [17.3, 17.2],
-  [32.0, 32.0],  // anchor: top of scale
-];
+// ── Quadratic regression: fits y = a·brix² + b·brix + c ──────────
+function fitQuadratic(marks) {
+  const n = marks.length;
+  if (n < 3) return null;
 
-function applyCalibration(raw) {
-  if (raw === null || raw === undefined) return null;
-  // Sort by raw value (should already be sorted, but just in case)
-  const pts = CALIBRATION.slice().sort((a, b) => a[0] - b[0]);
-  // Clamp to table range
-  if (raw <= pts[0][0]) return pts[0][1];
-  if (raw >= pts[pts.length - 1][0]) return pts[pts.length - 1][1];
-  // Find surrounding points and interpolate
-  for (let i = 0; i < pts.length - 1; i++) {
-    const [x0, y0] = pts[i];
-    const [x1, y1] = pts[i + 1];
-    if (raw >= x0 && raw <= x1) {
-      const t = (raw - x0) / (x1 - x0);
-      const corrected = y0 + t * (y1 - y0);
-      return Math.round(corrected * 10) / 10;
+  let S0=n, S1=0, S2=0, S3=0, S4=0, Ty=0, Txy=0, Tx2y=0;
+  for (const m of marks) {
+    const x = m.brix, y = m.y;
+    S1+=x; S2+=x*x; S3+=x*x*x; S4+=x*x*x*x;
+    Ty+=y; Txy+=x*y; Tx2y+=x*x*y;
+  }
+
+  let M = [
+    [S4, S3, S2, Tx2y],
+    [S3, S2, S1, Txy],
+    [S2, S1, S0, Ty]
+  ];
+
+  for (let col = 0; col < 3; col++) {
+    let maxRow = col;
+    for (let row = col+1; row < 3; row++)
+      if (Math.abs(M[row][col]) > Math.abs(M[maxRow][col])) maxRow = row;
+    [M[col], M[maxRow]] = [M[maxRow], M[col]];
+    if (Math.abs(M[col][col]) < 1e-10) return null;
+    for (let row = col+1; row < 3; row++) {
+      const f = M[row][col] / M[col][col];
+      for (let j = col; j < 4; j++) M[row][j] -= f * M[col][j];
     }
   }
-  return Math.round(raw * 10) / 10;
+
+  const c = [0, 0, 0];
+  for (let i = 2; i >= 0; i--) {
+    c[i] = M[i][3];
+    for (let j = i+1; j < 3; j++) c[i] -= M[i][j] * c[j];
+    c[i] /= M[i][i];
+  }
+  return { a: c[0], b: c[1], c: c[2] };
 }
+
+// ── Solve brix from y-position using the fitted curve ─────────────
+function solveBrix(fit, boundary_y) {
+  if (!fit) return null;
+  const { a, b, c } = fit;
+
+  if (Math.abs(a) < 1e-10) {
+    if (Math.abs(b) < 1e-10) return null;
+    return -(c - boundary_y) / b;
+  }
+
+  const disc = b*b - 4*a*(c - boundary_y);
+  if (disc < 0) return null;
+
+  const sq = Math.sqrt(disc);
+  const roots = [(-b+sq)/(2*a), (-b-sq)/(2*a)].filter(x => x >= -1 && x <= 33);
+  if (!roots.length) return null;
+
+  roots.sort((a, b) => Math.abs(a-16) - Math.abs(b-16));
+  return Math.round(roots[0] * 10) / 10;
+}
+
+// ── Fallback: piecewise linear interpolation ──────────────────────
+function piecewiseLinear(marks, boundary_y) {
+  const sorted = marks.slice().sort((a, b) => b.y - a.y);
+  for (let i = 0; i < sorted.length - 1; i++) {
+    const lo = sorted[i], hi = sorted[i+1];
+    if (boundary_y <= lo.y && boundary_y >= hi.y && lo.y !== hi.y) {
+      const frac = (lo.y - boundary_y) / (lo.y - hi.y);
+      return lo.brix + frac * (hi.brix - lo.brix);
+    }
+  }
+  return null;
+}
+
+// ── R² goodness of fit ───────────────────────────────────────────
+function rSquared(marks, fit) {
+  const mean_y = marks.reduce((s, m) => s + m.y, 0) / marks.length;
+  let ssRes = 0, ssTot = 0;
+  for (const m of marks) {
+    const predicted = fit.a * m.brix * m.brix + fit.b * m.brix + fit.c;
+    ssRes += (m.y - predicted) ** 2;
+    ssTot += (m.y - mean_y) ** 2;
+  }
+  return ssTot === 0 ? 0 : 1 - ssRes / ssTot;
+}
+
 // ──────────────────────────────────────────────────────────────────
 
 export default async function handler(req, res) {
@@ -49,24 +100,33 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-5',
-        max_tokens: 400,
-        system: `You are a refractometer image analyzer. Identify the VERTICAL POSITIONS of three specific features in the image, measured as percentage of total image height from top (0% = image top, 100% = image bottom).
+        max_tokens: 500,
+        system: `You are a refractometer scale analyzer. Your job is to precisely locate visual features in a refractometer eyepiece image.
 
-FEATURES TO LOCATE:
-1. BOUNDARY: The sharp horizontal line between the BLUE/DARK upper region and WHITE/CLEAR lower region
-2. LOWER_MARK: The highest labeled major scale mark (0,5,10,15,20,25,30) that appears BELOW the boundary
-3. UPPER_MARK: The lowest labeled major scale mark that appears ABOVE the boundary
+Measure all positions as PERCENTAGE of total image height from the top edge:
+- 0% = very top of image
+- 100% = very bottom of image
 
-Report the numeric value of each major mark and its y-position as a percentage.
-DO NOT calculate the Brix value yourself. Only report positions.
+REPORT ALL of these:
+
+1. BOUNDARY — the sharp horizontal line between the BLUE/DARK upper region and WHITE/CLEAR lower region. Find where it crosses the central scale column. Be precise: if there is a gradient, report the CENTER of the gradient transition.
+
+2. ALL VISIBLE MAJOR MARKS — for each labeled number you can see on the scale (from the set 0, 5, 10, 15, 20, 25, 30), report its value and its y-position. Only report marks you can clearly read.
+
+TIPS FOR ACCURACY:
+- The scale runs from 0 (bottom of viewfinder) to 30+ (top of viewfinder)
+- Higher Brix = higher in the image = lower y%
+- Each mark is a printed number paired with a long horizontal tick line
+- Look at where the number text ALIGNS with the scale, not the edge of the number
+- Be especially precise about the boundary — this is the most important measurement
 
 Respond ONLY with compact JSON, no preamble, no markdown:
-{"boundary_y":<number 0-100>,"lower_brix":<number>,"lower_y":<number 0-100>,"upper_brix":<number>,"upper_y":<number 0-100>,"confidence":"high"|"medium"|"low","notes":"<brief image quality note>"}`,
+{"boundary_y":<number>,"marks":[{"brix":<value>,"y":<position>},...],"confidence":"high"|"medium"|"low","notes":"<brief image quality note>"}`,
         messages: [{
           role: 'user',
           content: [
             { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: image } },
-            { type: 'text', text: 'Identify the vertical positions of the boundary line and the two nearest major scale marks.' }
+            { type: 'text', text: 'Report the y-positions of the boundary line and ALL visible major scale marks.' }
           ]
         }]
       })
@@ -77,27 +137,39 @@ Respond ONLY with compact JSON, no preamble, no markdown:
     const rawText = claudeData.content.map(b => b.text || '').join('').trim();
     const pos = JSON.parse(rawText.replace(/```json|```/g, '').trim());
 
-    // ── Geometric Brix calculation from y-positions ────────────────
-    let rawBrix = null;
-    let fraction = null;
-    if (
-      pos.lower_y !== undefined && pos.upper_y !== undefined &&
-      pos.boundary_y !== undefined && pos.lower_y !== pos.upper_y
-    ) {
-      fraction = (pos.lower_y - pos.boundary_y) / (pos.lower_y - pos.upper_y);
-      fraction = Math.max(0, Math.min(1, fraction));
-      rawBrix = pos.lower_brix + fraction * (pos.upper_brix - pos.lower_brix);
-      rawBrix = Math.round(rawBrix * 10) / 10;
+    // ── Calculate Brix using regression + fallback ────────────────
+    let brix = null;
+    let method = 'none';
+    let fitInfo = '';
+
+    if (pos.marks && pos.marks.length >= 3) {
+      const fit = fitQuadratic(pos.marks);
+      if (fit) {
+        const r2 = rSquared(pos.marks, fit);
+        if (r2 > 0.95) {
+          brix = solveBrix(fit, pos.boundary_y);
+          method = 'quadratic';
+          fitInfo = `R²=${r2.toFixed(4)} a=${fit.a.toFixed(6)} b=${fit.b.toFixed(4)} c=${fit.c.toFixed(2)}`;
+        }
+      }
     }
 
-    // ── Apply calibration correction ───────────────────────────────
-    const calibratedBrix = applyCalibration(rawBrix);
+    if (brix === null && pos.marks && pos.marks.length >= 2) {
+      brix = piecewiseLinear(pos.marks, pos.boundary_y);
+      method = 'piecewise';
+      fitInfo = `${pos.marks.length} marks`;
+    }
+
+    if (brix !== null) {
+      brix = Math.round(Math.max(0, Math.min(32, brix)) * 10) / 10;
+    }
+
+    const marksStr = (pos.marks || []).map(m => `${m.brix}@${m.y}%`).join(', ');
 
     const reading = {
-      brix: calibratedBrix,
-      brix_raw: rawBrix,
+      brix,
       confidence: pos.confidence,
-      boundary_position: `raw ${rawBrix} → calibrated ${calibratedBrix} | boundary ${pos.boundary_y}% · ${pos.lower_brix} mark @ ${pos.lower_y}% · ${pos.upper_brix} mark @ ${pos.upper_y}% · fraction ${fraction !== null ? fraction.toFixed(3) : 'n/a'}`,
+      boundary_position: `brix=${brix} [${method}] | boundary=${pos.boundary_y}% | marks: ${marksStr} | ${fitInfo}`,
       notes: pos.notes
     };
 
@@ -127,7 +199,7 @@ Respond ONLY with compact JSON, no preamble, no markdown:
       body: JSON.stringify({
         fruit_type: fruit_type || 'unspecified',
         batch_id: batch_id || null,
-        brix: calibratedBrix,
+        brix,
         confidence: reading.confidence,
         boundary_position: reading.boundary_position,
         notes: reading.notes,
